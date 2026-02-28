@@ -1,0 +1,17 @@
+# Ignore everything by default
+*
+
+# Include specific files/directories
+!.gitignore
+!src/
+!src/**
+!README.md
+!Makefile
+
+# Explicitly ignore (redundant but clear)
+.DS_Store
+src/**/.DS_Store
+docs/
+bin/
+obj/
+history.txt
