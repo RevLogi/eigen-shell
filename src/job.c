@@ -1,0 +1,58 @@
+#include "include/job.h"
+
+#include <stdlib.h>
+#include <string.h>
+
+#include "include/eigen.h"
+
+job *jobs[MAX_JOBS] = {NULL};
+
+int job_create(pid_t pid, int bg, char *cmd) {
+    job *new_job = malloc(sizeof(job));
+
+    new_job->pid = pid;
+    new_job->bg = bg;
+    new_job->state = RUNNING;
+    new_job->cmd = strdup(cmd);
+
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (!jobs[i]) {
+            jobs[i] = new_job;
+            new_job->jid = i + 1;
+            return new_job->jid;
+        }
+    }
+
+    // Free the memory if didn't find empty space
+    free(new_job);
+    return -1;
+}
+
+int job_delete() {
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (jobs[i] && (jobs[i]->state & FINISHED)) {
+            printf("[%d] Done %s\n", jobs[i]->jid, jobs[i]->cmd);
+            free(jobs[i]);
+            jobs[i] = NULL;
+        }
+    }
+    return 0;
+}
+
+int job_free() {
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (jobs[i]) {
+            free(jobs[i]);
+        }
+    }
+    return 0;
+}
+
+int job_find(int pid) {
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (jobs[i] != NULL && jobs[i]->pid == pid) {
+            return jobs[i]->jid;
+        }
+    }
+    return -1;
+}

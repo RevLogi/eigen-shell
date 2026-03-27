@@ -1,7 +1,10 @@
+#include <signal.h>
+
 #include "include/builtins.h"
 #include "include/eigen.h"
-#include "include/linenoise.h"
 #include "include/hashmap.h"
+#include "include/job.h"
+#include "include/linenoise.h"
 
 MyHashMap *shell_env = NULL;
 
@@ -9,10 +12,20 @@ int main(int argc, char **argv) {
     // Initialize shell env
     shell_env = initial();
 
+    // Enable signal handling
+    struct sigaction sa;
+    sa.sa_handler = &sigchld_handler;
+    sigemptyset(&sa.sa_mask);
+
+    if (sigaction(SIGCHLD, &sa, NULL) == -1) {
+        perror("sigaction");
+    }
+
     // Enable batch mode.
     if (argc > 1) {
         return run_script(argv[1]);
     }
+
     // Run command loop.
     eigen_loop();
 
@@ -42,7 +55,7 @@ int run_script(char *filename) {
         if (line[0] == '#') continue;
 
         char **args = eigen_split_line(line);
-        int status = eigen_execute(args);
+        int status = eigen_execute(args, line);
 
         free_tokens(args);
     }
@@ -58,7 +71,7 @@ int run_script(char *filename) {
  * 2. Exec: Replace the clone's memory with the new program.
  * 3. Wait: Pause parent execution until the child finished.
  */
-int eigen_launch(char **args) {
+int eigen_launch(char **args, char *line) {
     pid_t pid;
     int status;
 
@@ -66,12 +79,19 @@ int eigen_launch(char **args) {
         return 1;  // Ignore empty command
     }
 
+    // Block SIGCHLD to prevent race condition
+    sigset_t mask, prev_mask;
+    sigaddset(&mask, SIGCHLD);
+
+    sigprocmask(SIG_BLOCK, &mask, &prev_mask);
+
     // Create a child process.
     // Both two process will execute the following code.
     // Return 0 to the child process and child process ID to the parent process.
     pid = fork();
     if (pid == 0) {
         // Child process
+        sigprocmask(SIG_SETMASK, &prev_mask, NULL);
         if (execvp(args[0], args) == -1) {
             perror("Eigen");
         }
@@ -81,12 +101,26 @@ int eigen_launch(char **args) {
         perror("Eigen");
     } else {
         // Parent process
-        do {
-            // Wait for child process
-            waitpid(pid, &status, WUNTRACED);
-        } while (!WIFEXITED(status) && !WIFSIGNALED(status));
-        if (WIFSIGNALED(status)) {
-            printf("Child exited with code %d\n", WEXITSTATUS(status));
+        if (!bg) {
+            // Foreground process
+            sigprocmask(SIG_SETMASK, &prev_mask, NULL);
+            do {
+                // Wait for child process
+                waitpid(pid, &status, WUNTRACED);
+            } while (!WIFEXITED(status) && !WIFSIGNALED(status));
+            if (WIFSIGNALED(status)) {
+                printf("Child exited with code %d\n", WEXITSTATUS(status));
+            }
+        } else {
+            // Background process
+            int jid = job_create(pid, bg, line);
+            if (jid == -1) {
+                perror("Too many jobs");
+            }
+            sigprocmask(SIG_SETMASK, &prev_mask, NULL);
+
+            // Don't wait for child process
+            printf("[%d] %d %s\n", jid, pid, line);
         }
     }
 
@@ -94,7 +128,7 @@ int eigen_launch(char **args) {
     return 1;
 }
 
-int eigen_execute(char **args) {
+int eigen_execute(char **args, char *line) {
     if (args == NULL || args[0] == NULL) {
         return 1;
     }
@@ -109,7 +143,7 @@ int eigen_execute(char **args) {
     }
 
     // If it is not a builtin, call launch to execute
-    return eigen_launch(args);
+    return eigen_launch(args, line);
 }
 
 void completion(const char *buf, linenoiseCompletions *lc) {
@@ -147,7 +181,7 @@ void eigen_loop(void) {
             linenoiseHistoryAdd(line);
             linenoiseHistorySave("history.txt");
             args = eigen_split_line(line);
-            status = eigen_execute(args);
+            status = eigen_execute(args, line);
             free_tokens(args);
         }
         linenoiseFree(line);
@@ -156,3 +190,14 @@ void eigen_loop(void) {
     }
 }
 
+void sigchld_handler(int sig) {
+    int olderrno = errno;
+    int pid, jid;
+
+    while ((pid = wait(NULL) > 0)) {
+        if ((jid = job_find(pid)) != -1) {
+            jobs[jid]->state = FINISHED;
+            return;
+        }
+    }
+}

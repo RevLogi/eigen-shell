@@ -1,36 +1,51 @@
 CC = gcc
-CFLAGS = -Wall -g -Isrc/include
+CFLAGS = -Wall -g -Isrc/include -Itests -MMD -fsanitize=address -g
+CFLAGS_NO_ASAN = -Wall -g -Isrc/include -Itests -MMD
 SRCDIR = src
 OBJDIR = obj
 BINDIR = bin
-TARGET = $(BINDIR)/Eigen
+TARGET_ASAN = $(BINDIR)/Eigen
+TARGET_NO_ASAN = $(BINDIR)/Eigen_no_asan
 
-SRC = $(SRCDIR)/main.c $(SRCDIR)/utils.c $(SRCDIR)/builtins.c $(SRCDIR)/linenoise.c $(SRCDIR)/hashmap.c
-OBJ = $(OBJDIR)/main.o $(OBJDIR)/utils.o $(OBJDIR)/builtins.o $(OBJDIR)/linenoise.o $(OBJDIR)/hashmap.o
+SRC = $(SRCDIR)/main.c \
+      $(SRCDIR)/utils.c \
+      $(SRCDIR)/builtins.c \
+      $(SRCDIR)/linenoise.c \
+      $(SRCDIR)/hashmap.c \
+      $(SRCDIR)/job.c
 
-# Create directories if they don't exist
-$(OBJDIR) $(BINDIR):
-	mkdir -p $@
+OBJ_ASAN = $(SRC:$(SRCDIR)/%.c=$(OBJDIR)/asan_%.o)
+OBJ_NO_ASAN = $(SRC:$(SRCDIR)/%.c=$(OBJDIR)/noasan_%.o)
+DEP_ASAN = $(OBJ_ASAN:.o=.d)
+DEP_NO_ASAN = $(OBJ_NO_ASAN:.o=.d)
 
-$(TARGET): | $(OBJDIR) $(BINDIR) $(OBJ)
-	$(CC) $(CFLAGS) -o $(TARGET) $(OBJ)
+all: $(TARGET_ASAN)
 
-$(OBJDIR)/main.o: $(SRCDIR)/main.c $(SRCDIR)/include/eigen.h $(SRCDIR)/include/builtins.h $(SRCDIR)/include/hashmap.h
-	$(CC) $(CFLAGS) -c $(SRCDIR)/main.c -o $(OBJDIR)/main.o
+$(TARGET_ASAN): $(OBJ_ASAN)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) -o $(TARGET_ASAN) $(OBJ_ASAN)
 
-$(OBJDIR)/utils.o: $(SRCDIR)/utils.c $(SRCDIR)/include/eigen.h
-	$(CC) $(CFLAGS) -c $(SRCDIR)/utils.c -o $(OBJDIR)/utils.o
+$(TARGET_NO_ASAN): $(OBJ_NO_ASAN)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS_NO_ASAN) -o $(TARGET_NO_ASAN) $(OBJ_NO_ASAN)
 
-$(OBJDIR)/builtins.o: $(SRCDIR)/builtins.c $(SRCDIR)/include/eigen.h $(SRCDIR)/include/builtins.h $(SRCDIR)/include/hashmap.h
-	$(CC) $(CFLAGS) -c $(SRCDIR)/builtins.c -o $(OBJDIR)/builtins.o
+$(OBJDIR)/asan_%.o: $(SRCDIR)/%.c
+	@mkdir -p $(OBJDIR)
+	$(CC) $(CFLAGS) -c $< -o $@
 
-$(OBJDIR)/linenoise.o: $(SRCDIR)/linenoise.c $(SRCDIR)/include/linenoise.h
-	$(CC) $(CFLAGS) -c $(SRCDIR)/linenoise.c -o $(OBJDIR)/linenoise.o
+$(OBJDIR)/noasan_%.o: $(SRCDIR)/%.c
+	@mkdir -p $(OBJDIR)
+	$(CC) $(CFLAGS_NO_ASAN) -c $< -o $@
 
-$(OBJDIR)/hashmap.o: $(SRCDIR)/hashmap.c $(SRCDIR)/include/hashmap.h
-	$(CC) $(CFLAGS) -c $(SRCDIR)/hashmap.c -o $(OBJDIR)/hashmap.o
+ifneq ($(wildcard $(OBJDIR)/*.d),)
+-include $(OBJ_ASAN:.o=.d) $(OBJ_NO_ASAN:.o=.d)
+endif
 
 clean:
-	rm -f $(OBJDIR)/*.o $(TARGET)
+	rm -rf $(OBJDIR) $(BINDIR)
 
-.PHONY: clean
+leak: $(TARGET_NO_ASAN)
+	@echo "Built without ASan. To check for leaks:"
+	@echo "  MallocStackLogging=1 leaks --atExit -- ./bin/Eigen_no_asan"
+
+.PHONY: all clean leak
