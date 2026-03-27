@@ -15,7 +15,7 @@ typedef struct {
 extern MyHashMap *shell_env;
 
 // hashmap.c
-MyHashMap *initial();
+MyHashMap *initial(void);
 void install(MyHashMap *obj, char *key, char *value);
 char *lookup(MyHashMap *obj, char *key);
 void uninstall(MyHashMap *obj, char *key);

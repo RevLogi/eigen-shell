@@ -1,8 +1,8 @@
+#include "include/hashmap.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include "include/hashmap.h"
 
 #define INITIAL 6
 #define LOAD_FACTOR 0.75
@@ -10,8 +10,7 @@
 unsigned long hash_string(char *str) {
     unsigned long hash = 5381;
     int c;
-    while ((c = *str++))
-        hash = ((hash << 5) + hash) + c;
+    while ((c = *str++)) hash = ((hash << 5) + hash) + c;
     return hash;
 }
 
@@ -48,7 +47,7 @@ void resize(MyHashMap *obj) {
 
     for (int i = 0; i < obj->size; i++) {
         if (obj->buckets[i] != NULL) {
-            migrateList(obj ->buckets[i], newBuckets, newSize);
+            migrateList(obj->buckets[i], newBuckets, newSize);
         }
     }
 
@@ -126,7 +125,7 @@ void uninstall(MyHashMap *obj, char *key) {
 }
 
 void free_exports(MyHashMap *obj) {
-    for (int i = 0; i < obj->size;i++) {
+    for (int i = 0; i < obj->size; i++) {
         Node *curr = obj->buckets[i];
         while (curr != NULL) {
             Node *temp = curr;
@@ -140,4 +139,3 @@ void free_exports(MyHashMap *obj) {
     free(obj->buckets);
     free(obj);
 }
-

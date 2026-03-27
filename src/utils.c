@@ -1,6 +1,7 @@
+#include <ctype.h>
+
 #include "include/eigen.h"
 #include "include/hashmap.h"
-#include <ctype.h>
 
 #define EIGEN_CHECK_CAPACITY(ptr, pos, cap, inc, type)           \
     do {                                                         \
@@ -15,6 +16,8 @@
             (cap) = new_cap;                                     \
         }                                                        \
     } while (0)
+
+int bg = 0;
 
 char **eigen_split_line(char *line) {
     int bufsize = EIGEN_TOK_BUFSIZE;
@@ -65,7 +68,12 @@ char **eigen_split_line(char *line) {
     // Handle the last word
     if (write > word) {
         *write = '\0';
-        tokens[position++] = strdup(word);
+        if (strcmp(word, "&") == 0) {
+            bg = 1;
+        } else {
+            tokens[position++] = strdup(word);
+            bg = 0;
+        }
     }
     tokens[position] = NULL;
 
@@ -122,4 +130,3 @@ void free_tokens(char **tokens) {
 
     free(tokens);
 }
-

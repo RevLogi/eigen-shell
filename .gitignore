@@ -3,6 +3,7 @@
 
 # Include specific files/directories
 !.gitignore
+!test_eigen.py
 !src/
 !src/**
 !README.md
@@ -11,7 +12,9 @@
 # Explicitly ignore (redundant but clear)
 .DS_Store
 src/**/.DS_Store
-docs/
+!docs/
+docs/*
+!docs/PROJECT_GUIDE.md
 bin/
 obj/
 history.txt
