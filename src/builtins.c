@@ -1,15 +1,18 @@
+#include "include/builtins.h"
+
 #include <limits.h>
 #include <stdio.h>
 
-#include "include/builtins.h"
-#include "include/hashmap.h"
 #include "include/eigen.h"
+#include "include/hashmap.h"
+#include "include/job.h"
 #include "include/linenoise.h"
 
 static char *oldpwd = NULL;
-char *builtin_str[] = {"cd", "clear", "export", "help", "exit"};
+char *builtin_str[] = {"cd", "clear", "export", "jobs", "help", "exit"};
 
-int (*builtin_func[])(char **) = {&eigen_cd, &eigen_clear, &eigen_export, &eigen_help, &eigen_exit};
+int (*builtin_func[])(char **) = {&eigen_cd,   &eigen_clear, &eigen_export,
+                                  &eigen_jobs, &eigen_help,  &eigen_exit};
 
 int eigen_num_builtins() { return sizeof(builtin_func) / sizeof(char *); }
 
@@ -35,7 +38,25 @@ int eigen_cd(char **args) {
         target_path = oldpwd;
         printf("%s\n", target_path);
     } else {
-        target_path = args[1];
+        // Extend ~ expansion globally
+        if (args[1][1] == '~') {
+            char *home_path = getenv("HOME");
+            int home_len = strlen(home_path);
+            int orig_len = strlen(args[1]);
+
+            char *target_path = (char *)malloc(home_len + orig_len - 1);
+            if (!target_path) perror("Malloc failed");
+
+            for (int i = 0; i < home_len; i++) {
+                target_path[i] = home_path[i];
+            }
+
+            for (int j = 1; j < orig_len; j++) {
+                target_path[home_len + j - 1] = args[1][j];
+            }
+        } else {
+            target_path = args[1];
+        }
     }
 
     if (chdir(target_path) != 0) {
@@ -88,6 +109,27 @@ int eigen_export(char **args) {
     return 1;
 }
 
+int eigen_jobs() {
+    job_delete();
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (jobs[i] == NULL) continue;
+
+        char mark = ' ';
+        if (current_idx == i) mark = '+';
+        if (previous_idx == i) mark = '-';
+        char *state;
+        if (jobs[i]->state == RUNNING) {
+            state = strdup("RUNNING");
+        } else if (jobs[i]->state == STOPPED) {
+            state = strdup("STOPPED");
+        } else {
+            state = strdup("DONE");
+        }
+        printf("[%d]%c\t%s\t\t%s\n", jobs[i]->jid + 1, mark, state, jobs[i]->cmd);
+    }
+    return 1;
+}
+
 int eigen_help(char **args) {
     printf("The following are built-in:\n");
 
@@ -98,5 +140,8 @@ int eigen_help(char **args) {
     return 1;
 }
 
-int eigen_exit(char **args) { return 0; }
-
+int eigen_exit(char **args) {
+    job_free();
+    printf("exit\n");
+    return 0;
+}
