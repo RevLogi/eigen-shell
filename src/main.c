@@ -1,7 +1,11 @@
+#include <signal.h>
+#include <stdio.h>
+
 #include "include/builtins.h"
 #include "include/eigen.h"
-#include "include/linenoise.h"
 #include "include/hashmap.h"
+#include "include/job.h"
+#include "include/linenoise.h"
 
 MyHashMap *shell_env = NULL;
 
@@ -9,10 +13,21 @@ int main(int argc, char **argv) {
     // Initialize shell env
     shell_env = initial();
 
+    // Enable signal handling
+    signal(SIGCHLD, sigchld_handler);
+
+    // Ignore interactive signals
+    signal(SIGINT, SIG_IGN);
+    signal(SIGTSTP, SIG_IGN);
+    signal(SIGQUIT, SIG_IGN);
+    signal(SIGTTOU, SIG_IGN);
+    signal(SIGTTIN, SIG_IGN);
+
     // Enable batch mode.
     if (argc > 1) {
         return run_script(argv[1]);
     }
+
     // Run command loop.
     eigen_loop();
 
@@ -42,7 +57,7 @@ int run_script(char *filename) {
         if (line[0] == '#') continue;
 
         char **args = eigen_split_line(line);
-        int status = eigen_execute(args);
+        int status = eigen_execute(args, line);
 
         free_tokens(args);
     }
@@ -58,20 +73,41 @@ int run_script(char *filename) {
  * 2. Exec: Replace the clone's memory with the new program.
  * 3. Wait: Pause parent execution until the child finished.
  */
-int eigen_launch(char **args) {
+int eigen_launch(char **args, char *line) {
     pid_t pid;
     int status;
+
+    job_delete();
 
     if (args[0] == NULL) {
         return 1;  // Ignore empty command
     }
 
+    // Block SIGCHLD to prevent race condition
+    sigset_t mask_all, mask_one, prev_one;
+    if (sigfillset(&mask_all) == -1) _exit(1);
+    if (sigemptyset(&mask_one) == -1) _exit(1);
+    if (sigaddset(&mask_one, SIGCHLD)) _exit(1);
+    signal(SIGCHLD, sigchld_handler);
+
     // Create a child process.
     // Both two process will execute the following code.
     // Return 0 to the child process and child process ID to the parent process.
+    if (sigprocmask(SIG_BLOCK, &mask_one, &prev_one)) _exit(1);
+
     pid = fork();
     if (pid == 0) {
-        // Child process
+        // Child processsignal(SIGINT, SIG_DFL);
+        signal(SIGTSTP, SIG_DFL);
+        signal(SIGQUIT, SIG_DFL);
+        signal(SIGTTOU, SIG_DFL);
+        signal(SIGTTIN, SIG_DFL);
+        // Set independent process id
+        setpgid(0, 0);
+        if (!bg) {
+            tcsetpgrp(STDIN_FILENO, getpid());
+        }
+        sigprocmask(SIG_SETMASK, &prev_one, NULL);
         if (execvp(args[0], args) == -1) {
             perror("Eigen");
         }
@@ -81,12 +117,27 @@ int eigen_launch(char **args) {
         perror("Eigen");
     } else {
         // Parent process
-        do {
-            // Wait for child process
-            waitpid(pid, &status, WUNTRACED);
-        } while (!WIFEXITED(status) && !WIFSIGNALED(status));
-        if (WIFSIGNALED(status)) {
-            printf("Child exited with code %d\n", WEXITSTATUS(status));
+        if (!bg) {
+            // Foreground process
+            sigprocmask(SIG_SETMASK, &prev_one, NULL);
+            do {
+                // Wait for child process
+                waitpid(pid, &status, WUNTRACED);
+            } while (!WIFEXITED(status) && !WIFSIGNALED(status));
+            if (WIFSIGNALED(status)) {
+                printf("Child exited with code %d\n", WEXITSTATUS(status));
+            }
+        } else {
+            // Background process
+            sigprocmask(SIG_SETMASK, &mask_all, NULL);
+            int jid = job_create(pid, bg, line);
+            if (jid == -1) {
+                perror("Too many jobs");
+            }
+
+            // Don't wait for child process
+            printf("[%d] %d %s\n", jid + 1, pid, line);
+            sigprocmask(SIG_SETMASK, &prev_one, NULL);
         }
     }
 
@@ -94,7 +145,7 @@ int eigen_launch(char **args) {
     return 1;
 }
 
-int eigen_execute(char **args) {
+int eigen_execute(char **args, char *line) {
     if (args == NULL || args[0] == NULL) {
         return 1;
     }
@@ -109,7 +160,7 @@ int eigen_execute(char **args) {
     }
 
     // If it is not a builtin, call launch to execute
-    return eigen_launch(args);
+    return eigen_launch(args, line);
 }
 
 void completion(const char *buf, linenoiseCompletions *lc) {
@@ -147,7 +198,7 @@ void eigen_loop(void) {
             linenoiseHistoryAdd(line);
             linenoiseHistorySave("history.txt");
             args = eigen_split_line(line);
-            status = eigen_execute(args);
+            status = eigen_execute(args, line);
             free_tokens(args);
         }
         linenoiseFree(line);
@@ -156,3 +207,27 @@ void eigen_loop(void) {
     }
 }
 
+void sigchld_handler(int sig) {
+    sigset_t mask, prev_mask;
+    int olderrno = errno;
+    pid_t pid;
+    int jid;
+
+    if (sigfillset(&mask) == -1) {
+        _exit(1);
+    }
+
+    while ((pid = wait(NULL)) > 0) {
+        if (sigprocmask(SIG_BLOCK, &mask, &prev_mask) == -1) {
+            _exit(1);
+        }
+        if ((jid = job_find(pid)) != -1) {
+            jobs[jid]->state = FINISHED;
+        }
+        if (sigprocmask(SIG_SETMASK, &prev_mask, NULL) == -1) {
+            _exit(1);
+        }
+    }
+
+    errno = olderrno;
+}
